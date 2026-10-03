@@ -21,6 +21,7 @@
 #include <util/random/mersenne.h>
 #include <util/string/printf.h>
 #include <typeinfo>
+#include <util/system/env.h>
 
 bool VERBOSE = false;
 const bool PRINT_EVENT_BODY = false;
@@ -1140,7 +1141,10 @@ namespace NActors {
 
         TInstant dispatchTime = TInstant::MicroSeconds(0);
         TInstant deadline = dispatchTime + DispatchTimeout;
-        const TDuration scheduledEventsInspectInterval = TDuration::MilliSeconds(10);
+        // Experimental opt-in only: leave idle waits and Quiet behavior unchanged.
+        const TDuration scheduledEventsInspectInterval =
+            !UseRealThreads && GetEnv("YDB_EXPERIMENT_FAST_TIME") == "1"
+            ? TDuration::Zero() : TDuration::MilliSeconds(10);
         TInstant inspectScheduledEventsAt = dispatchTime + scheduledEventsInspectInterval;
         if (verbose) {
             Cerr << "Start dispatch at " << TInstant::MicroSeconds(CurrentTimestamp) << ", deadline is " << deadline << "\n";
