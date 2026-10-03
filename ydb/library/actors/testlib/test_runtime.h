@@ -34,6 +34,7 @@
 #include <util/system/valgrind.h>
 #include <utility>
 
+#include <array>
 #include <functional>
 #include <type_traits>
 
@@ -158,6 +159,8 @@ namespace NActors {
     typedef TSet<TScheduledEventQueueItem> TScheduledEventsList;
 
     class TEventMailBox : public TThrRefBase {
+        friend class TTestActorRuntimeBase;
+
     public:
         TEventMailBox()
             : InactiveUntil(TInstant::MicroSeconds(0))
@@ -185,6 +188,8 @@ namespace NActors {
         ui64 GetSentEventCount() const;
 
     private:
+        void ResetForReuse();
+
         TScheduledEventsList Scheduled;
         TInstant InactiveUntil;
         TEventsList Sent;
@@ -767,6 +772,10 @@ namespace NActors {
         TMutex Mutex;
         TCondVar MailboxesHasEvents;
         TEventMailBoxList Mailboxes;
+        // Keep a bounded set of empty queues off the dispatch list. Keeping
+        // them in Mailboxes would change dispatch order and random choices.
+        std::array<TIntrusivePtr<TEventMailBox>, 16> RecycledMailboxes;
+        size_t RecycledMailboxCount = 0;
         TMap<ui32, ui64> EvCounters;
         ui64 DispatchCyclesCount;
         ui64 DispatchedEventsCount;
@@ -810,7 +819,6 @@ namespace NActors {
             volatile ui64* ActorSystemMonotonic;
             TVector<std::pair<TActorId, TTestActorSetupCmd>> LocalServices;
             TMap<TActorId, IActor*> LocalServicesActors;
-            TMap<IActor*, TActorId> ActorToActorId;
             THolder<TMailboxTable> MailboxTable;
             std::shared_ptr<void> AppData0;
             THolder<TActorSystem> ActorSystem;

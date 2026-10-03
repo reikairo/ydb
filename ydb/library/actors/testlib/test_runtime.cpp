@@ -164,6 +164,15 @@ namespace NActors {
         return Sent.empty();
     }
 
+    void TEventMailBox::ResetForReuse() {
+        InactiveUntil = TInstant::Zero();
+#ifdef DEBUG_ORDER_EVENTS
+        TrackSent.clear();
+        ExpectedReceive = 0;
+        NextToSend = 0;
+#endif
+    }
+
     void TEventMailBox::Capture(TEventsList& evList) {
         evList.insert(evList.end(), Sent.begin(), Sent.end());
         Sent.clear();
@@ -1023,7 +1032,6 @@ namespace NActors {
         if (!UseRealThreads) {
             IActor* actor = FindActor(actorId, node);
             node->LocalServicesActors[serviceId] = actor;
-            node->ActorToActorId[actor] = actorId;
         }
 
         return node->ActorSystem->RegisterLocalService(serviceId, actorId);
@@ -1351,6 +1359,10 @@ namespace NActors {
                         auto it = currentMailboxes.find(id);
                         if (it != currentMailboxes.end() && it->second->IsEmpty() && it->second->IsScheduledEmpty() &&
                                 it->second->IsActive(TInstant::MicroSeconds(CurrentTimestamp))) {
+                            if (RecycledMailboxCount < RecycledMailboxes.size() && it->second.RefCount() == 1) {
+                                it->second->ResetForReuse();
+                                RecycledMailboxes[RecycledMailboxCount++] = std::move(it->second);
+                            }
                             currentMailboxes.erase(it);
                         }
                     }
@@ -1705,7 +1717,6 @@ namespace NActors {
         if (recipientActor) {
             // Save actorId by value in order to prevent ctx from being invalidated during another Send call.
             TActorId actorId = ev->GetRecipientRewrite();
-            node->ActorToActorId[recipientActor] = ev->GetRecipientRewrite();
             TActorContext ctx(*mailbox, *node->ExecutorThread, GetCycleCountFast(), actorId);
             TActivationContext *prevTlsActivationContext = TlsActivationContext;
             TlsActivationContext = &ctx;
@@ -1915,7 +1926,10 @@ namespace NActors {
         auto mboxId = TEventMailboxId(nodeId, hint);
         auto it = Mailboxes.find(mboxId);
         if (it == Mailboxes.end()) {
-            it = Mailboxes.insert(std::make_pair(mboxId, new TEventMailBox())).first;
+            auto mailbox = RecycledMailboxCount
+                ? std::move(RecycledMailboxes[--RecycledMailboxCount])
+                : MakeIntrusive<TEventMailBox>();
+            it = Mailboxes.emplace(mboxId, std::move(mailbox)).first;
         }
 
         return *it->second;
